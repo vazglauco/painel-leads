@@ -8,13 +8,17 @@ export const dynamic = 'force-dynamic';
 
 type LeadRow = { id: string; name: string; lead_class: string | null; phone: string | null; neighborhood: string | null; city: string | null; validation: string; contact_status: string };
 
-export default async function Admin({ searchParams }: { searchParams: Promise<{ q?: string; validation?: string; page?: string; selected?: string; error?: string; ok?: string }> }) {
+export default async function Admin({ searchParams }: { searchParams: Promise<{ q?: string; validation?: string; classe?: string; page?: string; selected?: string; error?: string; ok?: string }> }) {
   const { db, profile } = await requireProfile(true);
   const params = await searchParams;
   const q = (params.q ?? '').trim().slice(0, 100);
   const validation = ['pendente','validado','descartado','nao_contatar'].includes(params.validation ?? '') ? params.validation! : 'pendente';
+  const classes = ['A+','A','B','C','Revisar'];
+  const classe = params.classe === 'todas' || classes.includes(params.classe ?? '') ? params.classe! : 'triadas';
   const page = Math.max(1, Math.min(1000, Number(params.page) || 1));
-  let query = db.from('leads').select('id,name,lead_class,phone,neighborhood,city,validation,contact_status', { count: 'exact' }).eq('validation', validation).order('name').range((page - 1) * 30, page * 30 - 1);
+  let query = db.from('leads').select('id,name,lead_class,phone,neighborhood,city,validation,contact_status', { count: 'exact' }).eq('validation', validation).order('review_count', { ascending: false, nullsFirst: false }).order('name').range((page - 1) * 30, page * 30 - 1);
+  if (classes.includes(classe)) query = query.eq('lead_class', classe);
+  else if (classe === 'triadas') query = query.in('lead_class', ['A+','A','B','C']);
   if (q) query = query.or(`name.ilike.%${q.replace(/[,()%]/g, '')}%,id.ilike.%${q.replace(/[,()%]/g, '')}%`);
   const [{ data: rows, count, error: leadError }, { count: pendingCount }, { count: validatedCount }, { count: dueCount }] = await Promise.all([
     query,
@@ -26,7 +30,7 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
   const selectedId = leads.some(lead => lead.id === params.selected) ? params.selected : leads[0]?.id;
   const selectedResult = selectedId ? await db.from('leads').select('*').eq('id', selectedId).single() : { data: null };
   const lead = selectedResult.data;
-  const base = new URLSearchParams({ validation, q, page: String(page) });
+  const base = new URLSearchParams({ validation, classe, q, page: String(page) });
   const hrefFor = (id: string) => `/admin?${new URLSearchParams({ ...Object.fromEntries(base), selected: id })}`;
   const returnTo = `/admin?${base}`;
   const maps = safeExternal(lead?.maps_url);
@@ -37,7 +41,7 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
       <div className="triage-summary" aria-label="Resumo da operação"><div><strong>{pendingCount ?? 0}</strong><span>pendentes</span></div><div><strong>{validatedCount ?? 0}</strong><span>validadas</span></div><div><strong>{dueCount ?? 0}</strong><span>retornos vencidos</span></div></div></header>
     {params.error && <div className="alert error" role="alert">{params.error}</div>}{params.ok && <div className="alert success" role="status">{params.ok}</div>}
     <form method="get" className="triage-filters"><label className="search-field"><span className="sr-only">Buscar clínica ou ID</span><input name="q" placeholder="Buscar clínica ou ID" defaultValue={q}/></label>
-      <label><span className="sr-only">Validação</span><select name="validation" defaultValue={validation}><option value="pendente">Pendentes</option><option value="validado">Validadas</option><option value="descartado">Descartadas</option><option value="nao_contatar">Não contatar</option></select></label><button className="button outline">Filtrar</button>
+      <label><span className="sr-only">Validação</span><select name="validation" defaultValue={validation}><option value="pendente">Pendentes</option><option value="validado">Validadas</option><option value="descartado">Descartadas</option><option value="nao_contatar">Não contatar</option></select></label><label><span className="sr-only">Classe</span><select name="classe" defaultValue={classe}><option value="triadas">A+ a C</option><option value="A+">A+</option><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="Revisar">Revisar</option><option value="todas">Todas</option></select></label><button className="button outline">Filtrar</button>
       <Link href="/admin/import" className="text-link">Importar planilha</Link></form>
     {leadError && <div className="alert error" role="alert">{leadError.message}</div>}
     <div className="triage-workspace"><section className="triage-list" aria-label="Clínicas para triagem"><div className="triage-list-head"><span>Clínica</span><span>Classe</span><span>Telefone</span><span>Situação</span></div>
@@ -45,7 +49,7 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
         <span className="triage-name"><strong>{item.name}</strong><small>{[item.neighborhood, item.city].filter(Boolean).join(' · ') || 'Localização não informada'}</small></span>
         <span><span className="class-chip">{item.lead_class || 'Revisar'}</span></span><span className="triage-phone">{item.phone || 'Sem telefone'}</span><span className="triage-status"><span className={`status ${item.validation}`}>{statusLabel(item.validation)}</span><span aria-hidden="true">›</span></span>
       </Link>) : <p className="empty padded">Nenhuma clínica encontrada. Ajuste os filtros para continuar.</p>}
-      <div className="pagination"><span>Mostrando {leads.length} de {count ?? 0} clínicas</span><div>{page > 1 && <Link href={`/admin?${new URLSearchParams({ validation, q, page: String(page - 1) })}`}>← Anterior</Link>}{page * 30 < (count ?? 0) && <Link href={`/admin?${new URLSearchParams({ validation, q, page: String(page + 1) })}`}>Próxima →</Link>}</div></div>
+      <div className="pagination"><span>Mostrando {leads.length} de {count ?? 0} clínicas</span><div>{page > 1 && <Link href={`/admin?${new URLSearchParams({ validation, classe, q, page: String(page - 1) })}`}>← Anterior</Link>}{page * 30 < (count ?? 0) && <Link href={`/admin?${new URLSearchParams({ validation, classe, q, page: String(page + 1) })}`}>Próxima →</Link>}</div></div>
     </section>
     <aside className="review-pane" aria-label="Ficha de revisão">{lead ? <><div className="review-header"><div><h2>{lead.name}</h2><p>{[lead.neighborhood, lead.city].filter(Boolean).join(' · ') || 'Localização não informada'}</p></div><span className="class-chip large">{lead.lead_class || 'Revisar'}</span></div>
       <div className="review-tabs"><span className="active">Visão geral</span><Link href={`/leads/${lead.id}`}>Histórico completo →</Link></div>
